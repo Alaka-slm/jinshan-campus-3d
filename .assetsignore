@@ -1,0 +1,16 @@
+.git
+.wrangler
+wrangler.jsonc
+.assetsignore
+.gitignore
+_headers
+_redirects
+.claude
+README.md
+serve.py
+.env
+.dev.vars
+
+.agents
+.tmp-test
+node_modules

@@ -102,7 +102,7 @@
     v.W = v.rot ? h : w;
     v.H = v.rot ? w : h;
     v.portrait = v.H > v.W;
-    v.narrow = v.W < 900;
+    v.narrow = v.W < 640 || (v.H > v.W && v.W < 900);
     v.mid = v.W < 1180;
     v.short = v.H < 470;
     applyDom();
@@ -169,5 +169,6 @@
     document.addEventListener('DOMContentLoaded', () => v.measure());
   }
 })();
+
 
 

@@ -58,6 +58,8 @@ js/env.js             天空、太阳位置、光照与夜景
 js/controls.js        俯视 / 鸟瞰 / 第一人称控制与碰撞\njs/viewport.js        逻辑视口、强制横屏（整体旋转）与坐标换算\njs/touch.js           触屏手势、行走摇杆与动作键
 js/ui.js, js/main.js  界面与主程序
 serve.py              可选的本地静态服务器
+img/ favicon.ico manifest.webmanifest   校徽与图标（取自学校官网）
+wrangler.jsonc _headers .assetsignore   Cloudflare Worker 静态部署配置
 ```
 
 ## 数据来源
@@ -68,4 +70,12 @@ serve.py              可选的本地静态服务器
 - 学校简介：汕头市金山中学官网、维基百科
 
 本模型仅供学习交流，与实际情况可能存在差异。
+
+## 部署
+
+```bash
+wrangler deploy   # Cloudflare Worker 静态资源，路由见 wrangler.jsonc
+```
+
+`.assetsignore` 已排除 `.agents`、`.tmp-test`、`node_modules` 等，避免把开发/测试文件传上线。
 

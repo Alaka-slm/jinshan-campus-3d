@@ -1,0 +1,18 @@
+{
+	"name": "jinshan-campus-3d",
+	"compatibility_date": "2026-11-01",
+	"assets": {
+		"directory": ".",
+		"not_found_handling": "single-page-application"
+	},
+	"routes": [
+		{
+			"pattern": "12-s_home.paig.top/*",
+			"zone_name": "paig.top"
+		},
+		{
+			"pattern": "jszx.paig.top/*",
+			"zone_name": "paig.top"
+		}
+	]
+}
