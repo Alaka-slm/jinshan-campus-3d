@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>汕头市金山中学 · 3D 校园</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-mode="top">
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+  <div id="crosshair"></div>
+
+  <header id="topbar">
+    <div class="brand">
+      <div class="logo">金</div>
+      <div>
+        <div class="t1">汕头市金山中学</div>
+        <div class="t2">3D 校园 · 礐石海关顶</div>
+      </div>
+    </div>
+    <nav id="modes" class="seg">
+      <button data-mode="top" class="on"><span>俯视</span><kbd>1</kbd></button>
+      <button data-mode="orbit"><span>鸟瞰</span><kbd>2</kbd></button>
+      <button data-mode="fps"><span>第一人称</span><kbd>3</kbd></button>
+    </nav>
+    <div class="tools">
+      <label class="time" title="时刻（按今天的日期计算太阳位置）">
+        <span class="ti">时间</span>
+        <input id="time" type="range" min="5.5" max="20" step="0.05" value="10.5" />
+        <span id="timeText">10:30</span>
+      </label>
+      <button id="btnLabels" class="tog on" title="显示/隐藏标注 (L)">标注</button>
+      <button id="btnShadows" class="tog on" title="阴影开关">阴影</button>
+      <button id="btnQuality" class="tog" title="切换画质">画质：高</button>
+      <button id="btnHelp" class="round" title="操作说明 (H)">?</button>
+    </div>
+  </header>
+
+  <aside id="places" class="panel">
+    <div class="ph"><b>校园导览</b><button id="placesToggle" title="收起/展开">▾</button></div>
+    <div id="placesList"></div>
+  </aside>
+
+  <div id="info" class="panel hidden"></div>
+
+  <div id="mapbox">
+    <canvas id="minimap"></canvas>
+    <div id="mmN">北</div>
+  </div>
+  <div id="compass" title="点击回正北（俯视/鸟瞰）"><div class="needle"><i></i></div></div>
+  <div id="status"></div>
+  <div id="toast"></div>
+
+  <div id="fpsOverlay" class="hidden">
+    <div class="card">
+      <h2>点击画面开始漫游</h2>
+      <div class="keys">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动</div>
+        <div><kbd>鼠标</kbd> 环顾</div>
+        <div><kbd>Shift</kbd> 奔跑</div>
+        <div><kbd>空格</kbd> 跳跃</div>
+        <div><kbd>F</kbd> 飞行 / 步行</div>
+        <div><kbd>Esc</kbd> 释放鼠标</div>
+        <div><kbd>1</kbd> 俯视 <kbd>2</kbd> 鸟瞰</div>
+        <div>点击小地图可传送</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="help" class="modal hidden">
+    <div class="mcard">
+      <button class="close" title="关闭">×</button>
+      <h2>操作说明</h2>
+      <div class="cols">
+        <div>
+          <h4>俯视 <kbd>1</kbd></h4>
+          <p>左键拖动平移 · 滚轮缩放 · 右键拖动旋转<br />WASD / 方向键平移 · Q/E 旋转<br /><b>双击地面</b>：从该处进入第一人称</p>
+          <h4>鸟瞰 <kbd>2</kbd></h4>
+          <p>左键拖动环绕 · 右键（或 Shift+左键）平移 · 滚轮缩放</p>
+        </div>
+        <div>
+          <h4>第一人称 <kbd>3</kbd></h4>
+          <p>点击画面锁定鼠标 · WASD 移动 · 鼠标环顾<br />Shift 奔跑 · 空格跳跃 · F 切换飞行（空格/E 升，C/Q 降）<br />与建筑、树干碰撞；可走上景观天桥</p>
+          <h4>其他</h4>
+          <p>点击建筑或标注查看介绍 · L 标注开关 · 顶部滑块调节时间（按今天日期计算日照，可看夜景）</p>
+        </div>
+      </div>
+      <h4>数据来源与说明</h4>
+      <p class="small">
+        建筑轮廓、道路、运动场、水体等来自 © OpenStreetMap 贡献者（ODbL）；地形为 SRTM 1″ 高程（经 OpenTopoData）；
+        树木分布与屋顶颜色由 Esri World Imagery 卫星影像自动分类/采样得到。
+        建筑层数除 OSM 已标注者（高一 7 层、高二 6 层、C 栋 6 层）外为根据影像的估计；校门、亭子、雕塑等小品造型为示意；
+        对岸汕头市区天际线与港湾船只为程序生成的氛围元素。本模型仅供学习交流，与实际可能存在差异。
+      </p>
+    </div>
+  </div>
+
+  <div id="loading">
+    <div class="lcard">
+      <div class="logo big">金</div>
+      <h1>汕头市金山中学 · 3D 校园</h1>
+      <p>依山傍海 · 礐石海关顶</p>
+      <div class="bar"><i id="lbar"></i></div>
+      <div id="ltext">加载中…</div>
+    </div>
+  </div>
+
+  <script src="lib/three.min.js"></script>
+  <script src="data/campus-data.js"></script>
+  <script src="data/campus-info.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/textures.js"></script>
+  <script src="js/terrain.js"></script>
+  <script src="js/ground.js"></script>
+  <script src="js/buildings.js"></script>
+  <script src="js/sports.js"></script>
+  <script src="js/vegetation.js"></script>
+  <script src="js/props.js"></script>
+  <script src="js/env.js"></script>
+  <script src="js/controls.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
