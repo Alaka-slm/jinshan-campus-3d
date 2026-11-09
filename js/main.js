@@ -8,6 +8,7 @@
 
   const app = (JZ.app = {});
   const ui = (app.ui = new JZ.UI(app));
+  const V = JZ.view;
   const step = async (t, f) => { ui.progress(t, f); await JZ.nextFrame(); await JZ.nextFrame(); };
 
   async function init() {
@@ -22,7 +23,7 @@
       ui.error('无法创建 WebGL 渲染器，请使用新版 Chrome / Edge / Firefox 打开。');
       return;
     }
-    // 依据显卡自动选择默认画质（集显默认“中”）
+    // 依据显卡自动选择默认画质（集显默认“中”；触屏设备再多降一档以省电省发热）
     let gpu = '';
     try {
       const gl = renderer.getContext();
@@ -31,11 +32,12 @@
     } catch (e) { /* 忽略 */ }
     const weakGPU = /Intel|SwiftShader|llvmpipe|Mali|Adreno|PowerVR|Microsoft Basic/i.test(gpu);
     app.gpu = gpu;
-    app.quality = localStorage.getItem('jz-quality') || (weakGPU ? 'medium' : 'high');
+    app.quality = localStorage.getItem('jz-quality') || (weakGPU || V.isTouch ? 'medium' : 'high');
     const applyQuality = () => {
       const q = app.quality;
-      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1 : 0.8));
-      renderer.setSize(innerWidth, innerHeight, false);
+      const cap = q === 'high' ? 2 : q === 'medium' ? 1.5 : 0.85;
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, V.isTouch ? Math.min(cap, 1.6) : cap));
+      renderer.setSize(V.W, V.H, false);
       if (app.env) {
         const s = q === 'high' ? 4096 : q === 'medium' ? 2048 : 1024;
         if (app.env.sun.shadow.mapSize.x !== s) {
@@ -54,7 +56,9 @@
     renderer.shadowMap.autoUpdate = false; // 阴影仅在视点明显移动/时间变化时重绘
     JZ.maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 40000);
+    // 竖屏时窄视角会切掉两侧，横屏（含强制横屏）用标准 55°
+    const fovFor = () => (V.portrait ? 68 : 55);
+    const camera = new THREE.PerspectiveCamera(fovFor(), V.aspect(), 0.3, 40000);
     app.renderer = renderer; app.scene = scene; app.camera = camera; app.data = data;
 
     // ---- 地形与修整 ----
@@ -159,9 +163,9 @@
     const extraBlock = [];
     if (sportsPrep.stadium) extraBlock.push(sportsPrep.stadium.area.pts);
     const blocked = JZ.Ground.blockedMask(data, extraBlock);
-    const V = JZ.Vegetation.build({ data, terrain, lc, blocked, campusZone: zone });
-    scene.add(V.group);
-    console.info('[金中3D] 建筑', blds.length, '树木', V.count, '巨石', V.rocks);
+    const veg = JZ.Vegetation.build({ data, terrain, lc, blocked, campusZone: zone });
+    scene.add(veg.group);
+    console.info('[金中3D] 建筑', blds.length, '树木', veg.count, '巨石', veg.rocks);
 
     // ---- 路灯、对岸城市、船 ----
     await step('路灯、对岸天际线与港湾…', 0.78);
@@ -176,7 +180,7 @@
     const [rx0, ry0, rx1, ry1] = data.region;
     const grid = new JZ.Grid(rx0, ry0, rx1, ry1, 20);
     for (const o of B.obstacles) grid.insert(o, o.bb);
-    for (const t of V.trunks) { const o = { circle: true, x: t.x, y: t.y, r: t.r }; grid.insert(o, [t.x - t.r, t.y - t.r, t.x + t.r, t.y + t.r]); }
+    for (const t of veg.trunks) { const o = { circle: true, x: t.x, y: t.y, r: t.r }; grid.insert(o, [t.x - t.r, t.y - t.r, t.x + t.r, t.y + t.r]); }
     for (const o of extraObstacles) grid.insert(o, [o.x - o.r, o.y - o.r, o.x + o.r, o.y + o.r]);
     for (const s of LM.spots) { const o = { circle: true, x: s.x, y: s.y, r: 0.12 }; grid.insert(o, [s.x - 0.2, s.y - 0.2, s.x + 0.2, s.y + 0.2]); }
     app.grid = grid;
@@ -223,7 +227,7 @@
     app.labelItems = labelItems;
     ui.initLabels(labelItems);
     ui.initPlaces(labelItems);
-    if (innerWidth < 900) document.getElementById('places').classList.add('collapsed');
+    if (V.narrow || V.short) document.getElementById('places').classList.add('collapsed');
     ui.initMinimap(wide.c, data.region, blds, { school: sp });
 
     // ---- 相机控制 ----
@@ -231,12 +235,23 @@
     rig.target.set(-60, terrain.height(-60, 0), 0);
     rig.dist = 900;
     rig.setMode('top', { instant: true, force: true });
+    // 触屏首次进入第一人称：短暂显示操作提示，几秒后自动收起
+    const fpsTip = () => {
+      if (!V.isTouch || app._fpsTipShown) return;
+      app._fpsTipShown = true;
+      ui.fpsOverlay(true);
+      clearTimeout(app._fpsTipT);
+      app._fpsTipT = setTimeout(() => ui.fpsOverlay(false), 3000);
+    };
     rig.on('mode', (m) => {
       ui.setModeButtons(m === 'transition' ? rig._pendingMode || 'fps' : m);
-      ui.fpsOverlay(m === 'fps' && !rig.locked);
+      if (m === 'fps' && V.isTouch) fpsTip();
+      else ui.fpsOverlay(m === 'fps' && !rig.locked && !V.isTouch);
       document.getElementById('crosshair').style.display = m === 'fps' ? 'block' : 'none';
+      if (app.touch) app.touch.syncMode();
+      syncOrient();
     });
-    rig.on('lock', (l) => ui.fpsOverlay(rig.mode === 'fps' && !l));
+    rig.on('lock', (l) => { ui.fpsOverlay(rig.mode === 'fps' && !l && !V.isTouch); syncOrient(); });
     rig.on('dblground', (p) => {
       if (rig.blocked(p.x, p.y)) { ui.toast('这里是水面，换个地方吧'); return; }
       rig.setMode('fps', { at: { x: p.x, y: p.y }, yaw: rig.yaw });
@@ -244,21 +259,27 @@
     const raycaster = new THREE.Raycaster();
     const pickables = [];
     scene.traverse((o) => { if (o.isMesh && o.userData.pick) pickables.push(o); });
-    rig.on('click', (e) => {
-      const r = canvas.getBoundingClientRect();
-      raycaster.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+    // 逻辑坐标拾取（鼠标点击与触屏单击共用）
+    app.pickAt = (lx, ly) => {
+      const V2 = JZ.view;
+      const W = V2.W, H = V2.H;
+      raycaster.setFromCamera(new THREE.Vector2((lx / W) * 2 - 1, -(ly / H) * 2 + 1), camera);
       const hit = raycaster.intersectObjects(pickables, false)[0];
       if (!hit) { ui.showInfo(null); return; }
       let bid = hit.object.userData.bid;
       if (bid === undefined && hit.object.geometry.userData.faceBid) bid = hit.object.geometry.userData.faceBid[hit.faceIndex];
-      if (bid === undefined) return;
+      if (bid === undefined) { ui.showInfo(null); return; }
       const Bd = blds[bid];
       let it = labelItems.find((l) => l.bid === bid);
       if (!it) {
-        const typeName = { dormitory: '宿舍', school: '校舍', house: '住宅', residential: '住宅', apartments: '住宅楼', hospital: '医院建筑', industrial: '厂房' }[Bd.osm.building] || '建筑';
+        const typeName = { dormitory: '宿舍', school: '校舍', house: '住宅', residential: '住宅', apartment: '住宅楼', apartments: '住宅楼', hospital: '医院建筑', industrial: '厂房' }[Bd.osm.building] || '建筑';
         it = { name: Bd.name || typeName + '（未命名）', x: Bd.c[0], y: Bd.c[1], h: Bd.top + 3, bid, cat: Bd.meta.cat };
       }
       ui.showInfo(it);
+    };
+    rig.on('click', (e) => {
+      const p = JZ.view.toLocal(e.clientX, e.clientY);
+      app.pickAt(p.x, p.y);
     });
 
     app.select = (it, focus) => {
@@ -375,6 +396,7 @@
     const toggleHelp = (v) => {
       const show = v === undefined ? help.classList.contains('hidden') : v;
       help.classList.toggle('hidden', !show);
+      if (show) document.getElementById('topbar').classList.remove('tools-open');
     };
     document.getElementById('btnHelp').addEventListener('click', () => { rig.unlock(); toggleHelp(); });
     help.addEventListener('click', (e) => { if (e.target === help || e.target.classList.contains('close')) toggleHelp(false); });
@@ -382,7 +404,109 @@
       if (rig.mode === 'top' || rig.mode === 'orbit') { rig.yaw = 0; }
     });
     document.getElementById('placesToggle').addEventListener('click', () => document.getElementById('places').classList.toggle('collapsed'));
-    document.getElementById('fpsOverlay').addEventListener('click', () => rig.lock());
+    document.getElementById('fpsOverlay').addEventListener('click', () => {
+      if (JZ.view.isTouch) { ui.fpsOverlay(false); return; }
+      rig.lock();
+    });
+    const fpsGo = document.getElementById('fpsGo');
+    if (fpsGo) fpsGo.addEventListener('click', (e) => { e.stopPropagation(); ui.fpsOverlay(false); });
+
+    // ---- 触屏 / 竖屏 UI ----
+    const topbar = document.getElementById('topbar');
+    document.getElementById('btnMore').addEventListener('click', () => topbar.classList.toggle('tools-open'));
+    document.addEventListener('click', (e) => {
+      if (!topbar.classList.contains('tools-open')) return;
+      if (topbar.contains(e.target)) return;
+      topbar.classList.remove('tools-open');
+    });
+
+    const btnOrient = document.getElementById('btnOrient');
+    const orientTip = document.getElementById('orientTip');
+    const syncOrient = () => {
+      const on = V.wantLandscape;
+      const usable = V.isTouch; // 桌面无需此功能
+      btnOrient.classList.toggle('on', on && usable);
+      btnOrient.classList.toggle('hidden', !usable);
+      btnOrient.textContent = on ? '取消横屏' : '强制横屏';
+      // 只有「物理竖屏 + 已强制旋转」时才提示用户把手机横过来
+      const tip = on && V.rot === 90;
+      orientTip.classList.toggle('hidden', !tip);
+      if (tip && !app._tipT) app._tipT = setTimeout(() => orientTip.classList.add('hidden'), 6000);
+    };
+    btnOrient.addEventListener('click', () => {
+      V.toggleLandscape();
+      app._tipT = clearTimeout(app._tipT);
+      ui.toast(V.wantLandscape ? (V.rot ? '已强制横屏：把手机横过来即可' : '已开启横屏优先') : '已恢复跟随系统方向');
+    });
+    document.getElementById('orientUndo').addEventListener('click', () => {
+      V.setLandscape(false);
+      app._tipT = clearTimeout(app._tipT);
+      ui.toast('已恢复跟随系统方向');
+    });
+    V.on(() => { syncOrient(); syncSizes(); });
+
+    // 视口变化：相机、渲染器、拾取、界面都要跟着变
+    const syncSizes = () => {
+      const fov = V.portrait ? 68 : 55;
+      if (camera.aspect !== V.aspect() || camera.fov !== fov) {
+        camera.aspect = V.aspect();
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+      }
+      renderer.setSize(V.W, V.H, false);
+      if (app.env) app.env.shadowDirty = true;
+    };
+    syncOrient();
+    syncSizes();
+
+    // 触屏输入层（手指手势 + 摇杆 + 动作键）
+    const touch = (app.touch = new JZ.TouchInput(rig, app));
+
+    // 供自动化测试与排查布局用（只读快照）
+    app.layout = () => {
+      const box = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return { display: cs.display, visibility: cs.visibility };
+        const r = el.getBoundingClientRect();
+        // 旋转时把屏幕矩形换算回 #app 逻辑坐标
+        let x, y, w, h;
+        if (V.rot) {
+          const c = V.toLocal(r.left + r.width / 2, r.top + r.height / 2);
+          w = r.height; h = r.width;
+          x = c.x - w / 2; y = c.y - h / 2;
+        } else {
+          const a = V.stage.getBoundingClientRect();
+          x = r.left - a.left; y = r.top - a.top; w = r.width; h = r.height;
+        }
+        return { x: +x.toFixed(1), y: +y.toFixed(1), w: +w.toFixed(1), h: +h.toFixed(1), display: cs.display };
+      };
+      const sels = ['#topbar', '#modes', '#tools', '#btnMore', '#places', '#info', '#mapbox', '#compass', '#status', '#stick', '#actionPad', '#orientTip', '#fpsOverlay', '#help'];
+      const boxes = {};
+      for (const s of sels) boxes[s] = box(s);
+      const names = sels.filter((s) => boxes[s] && boxes[s].w !== undefined);
+      const overlaps = [];
+      for (let i = 0; i < names.length; i++)
+        for (let j = i + 1; j < names.length; j++) {
+          const a = boxes[names[i]], b = boxes[names[j]];
+          const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+          const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+          if (ox > 2 && oy > 2) overlaps.push([names[i], names[j], +ox.toFixed(0), +oy.toFixed(0)]);
+        }
+      const overflow = names.filter((s) => {
+        const b = boxes[s];
+        return b.x < -2 || b.y < -2 || b.x + b.w > V.W + 2 || b.y + b.h > V.H + 2;
+      });
+      return {
+        W: V.W, H: V.H, vw: V.vw, vh: V.vh, rot: V.rot, portrait: V.portrait,
+        isTouch: V.isTouch, isWechat: V.isWeChat, wantLandscape: V.wantLandscape,
+        narrow: V.narrow, short: V.short, bodyClass: document.body.className,
+        mode: rig.mode, quality: app.quality,
+        boxes, overlaps, overflow,
+      };
+    };
+
     window.addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT')) return;
       if (e.code === 'Digit1') switchMode('top');
@@ -392,13 +516,9 @@
       else if (e.code === 'KeyH') { rig.unlock(); toggleHelp(); }
       else if (e.code === 'KeyF' && rig.mode === 'fps') {
         rig.fly = !rig.fly;
+        if (app.touch) app.touch.syncMode();
         ui.toast(rig.fly ? '飞行模式：空格/E 上升，C/Q 下降' : '步行模式');
       } else if (e.code === 'Escape') { toggleHelp(false); }
-    });
-    window.addEventListener('resize', () => {
-      camera.aspect = innerWidth / innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight, false);
     });
 
     // ---- 渲染循环 ----
@@ -424,7 +544,7 @@
       lodT -= dt;
       if (lodT <= 0) {
         lodT = 0.25;
-        if (V.updateLOD(camera.position)) env.shadowDirty = true;
+        if (veg.updateLOD(camera.position)) env.shadowDirty = true;
       }
       // 仅在视点移动较多、范围变化或时间变化时重绘阴影贴图
       if (!lastSF || env.shadowDirty || Math.hypot(focusV.x - lastSF.x, focusV.z - lastSF.z) > rad * 0.1 || Math.abs(rad - lastSF.r) > lastSF.r * 0.18) {
@@ -438,6 +558,7 @@
       seaN.offset.y += dt * 0.0025;
       waterN.offset.x -= dt * 0.01;
       BO.update(dt);
+      if (app.touch) app.touch.update(dt);
       ui.updateLabels(camera, rig, dt);
       ui.drawMinimap(rig);
       frames++;

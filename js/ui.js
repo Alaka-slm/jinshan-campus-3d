@@ -48,7 +48,8 @@
       requestAnimationFrame(() => this.labels.forEach((l) => (l.w = l.el.offsetWidth || l.it.name.length * 13 + 16)));
     }
     updateLabels(cam, rig, dt) {
-      const W = innerWidth, H = innerHeight;
+      const V = JZ.view || { W: innerWidth, H: innerHeight };
+      const W = V.W, H = V.H;
       const mode = rig.mode === 'transition' ? rig._pendingMode || 'top' : rig.mode;
       const camH = cam.position.y - this.app.terrain.height(cam.position.x, -cam.position.z);
       const cands = [];
@@ -132,25 +133,62 @@
       this.mmBase = base;
       this.mmRegion = region;
       const cv = $('#minimap');
-      const dpr = Math.min(2, devicePixelRatio || 1);
-      const S = cv.clientWidth || 220;
-      cv.width = S * dpr;
-      cv.height = S * dpr;
-      this.mm = { cv, g: cv.getContext('2d'), S, dpr, scale: 1 };
+      this.mm = { cv, g: cv.getContext('2d'), S: 220, dpr: 1, scale: 1 };
+      this.layoutMinimap();
       cv.addEventListener('click', (e) => {
-        const r = cv.getBoundingClientRect();
-        const dx = e.clientX - r.left - S / 2, dy = e.clientY - r.top - S / 2;
+        const V = JZ.view;
+        const d = this.mmCenterOffset();
+        const S = this.mm.S;
+        const p = V ? V.toLocal(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+        const dx = p.x - d.x, dy = p.y - d.y;
         const { f, hdg, scale } = this.mm.last || {};
         if (!f) return;
         const c = Math.cos(hdg), s = Math.sin(hdg);
         const xr = dx * c + dy * s, yr = -dx * s + dy * c;
         this.app.jumpTo(f.x + xr / scale, f.y - yr / scale);
       });
+      // 尺寸随布局变化（竖屏/横屏、手机/平板）
+      if (JZ.view) {
+        JZ.view.on(() => this.layoutMinimap());
+      }
+    }
+    // 小地图圆心在 #app 逻辑坐标中的位置
+    mmCenterOffset() {
+      const box = document.getElementById('mapbox');
+      const S = this.mm ? this.mm.S : 220;
+      if (!box) return { x: S / 2, y: S / 2 };
+      let x = 0, y = 0, el = box;
+      while (el && el.id !== 'app' && el.offsetParent) {
+        x += el.offsetLeft;
+        y += el.offsetTop;
+        el = el.offsetParent;
+      }
+      return { x: x + box.offsetWidth / 2, y: y + box.offsetHeight / 2 };
+    }
+    layoutMinimap() {
+      const m = this.mm;
+      if (!m) return;
+      const cv = m.cv;
+      const dpr = Math.min(2, devicePixelRatio || 1);
+      const S = Math.max(72, Math.round(cv.clientWidth || 220));
+      if (m.S === S && m.dpr === dpr && cv.width) return;
+      m.S = S;
+      m.dpr = dpr;
+      cv.width = Math.round(S * dpr);
+      cv.height = Math.round(S * dpr);
     }
     drawMinimap(rig) {
       const m = this.mm;
       if (!m) return;
       const { g, S, dpr } = m;
+      // 圆心按需更新（避免每帧读 offsetWidth 触发重排）
+      m._ctrT = (m._ctrT || 0) - 1;
+      if (!m.cx || m._ctrT <= 0) {
+        const ctr = this.mmCenterOffset();
+        m.cx = ctr.x;
+        m.cy = ctr.y;
+        m._ctrT = 40;
+      }
       const f = rig.focus(), hdg = rig.heading();
       const mode = rig.mode === 'transition' ? rig._pendingMode || 'fps' : rig.mode;
       const scale = mode === 'fps' ? 1.5 : clamp(S / (rig.dist * 1.5), 0.12, 2.2);
@@ -237,6 +275,7 @@
     showInfo(it) {
       this.selected = it;
       const el = $('#info');
+      document.body.classList.toggle('info-open', !!it);
       if (!it) { el.classList.add('hidden'); return; }
       const B = it.bid !== undefined ? this.app.buildings[it.bid] : null;
       let rows = '';
@@ -255,6 +294,7 @@
         ${it.desc ? `<p>${it.desc}</p>` : ''}
         <div class="acts"><button class="fly">飞过去看看</button><button class="walk primary">在此步行</button></div>`;
       el.classList.remove('hidden');
+      this.syncTouchUI();
       el.querySelector('.x').onclick = () => this.showInfo(null);
       el.querySelector('.fly').onclick = () => this.app.goTo(it, 'fly');
       el.querySelector('.walk').onclick = () => this.app.goTo(it, 'walk');
@@ -269,6 +309,10 @@
     }
     fpsOverlay(show) {
       $('#fpsOverlay').classList.toggle('hidden', !show);
+    }
+    // 触屏下信息卡是底部抽屉：打开时隐藏摇杆/动作键
+    syncTouchUI() {
+      document.body.classList.toggle('info-open', !$('#info').classList.contains('hidden'));
     }
     toast(msg, ms = 2200) {
       const t = $('#toast');
