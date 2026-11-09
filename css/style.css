@@ -363,3 +363,7 @@ body.is-touch #info .x, body.is-touch .mcard .close { font-size: 26px; }
 .w-mid:not(.w-narrow) .tools { gap: 6px; min-width: 0; }
 .w-mid:not(.w-narrow) .tools button { padding: 6px 9px; font-size: 12px; white-space: nowrap; }
 .w-mid:not(.w-narrow) .t1 { font-size: 14px; white-space: nowrap; }
+
+/* 校徽 */
+.logo img { width: 74%; height: 74%; object-fit: contain; display: block; pointer-events: none; -webkit-user-drag: none; }
+.logo { background: #b3261e; }

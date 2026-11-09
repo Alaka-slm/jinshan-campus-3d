@@ -1,0 +1,25 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+
+# 说明（三处有意为之，改动前请读完）：
+# 1) script-src 放行 static.cloudflareinsights.com：该脚本由 Cloudflare 在边缘自动注入
+#    （Web Analytics），并非本站代码。不放行会在每次访问时抛 CSP 违规报错，
+#    噪音会掩盖真正的错误，因此显式放行而非依赖通配。
+# 2) style-src 保留 'unsafe-inline'：js/ui.js 通过 innerHTML 写入 style="color:..."，
+#    Three.js 也会设置元素 style，移除会导致界面样式错乱。
+# 3) 不使用 Strict-Transport-Security 的 includeSubDomains：paig.top 是共享区域，
+#    加了会把强制 HTTPS 扩散到所有子域（含他人已在用的），风险大于收益。
+
+# 缓存：本项目 JS/CSS 文件名不含内容哈希（如 main.js 而非 main.a1b2c3.js），
+# 因此不能设长 max-age —— 一旦更新代码，浏览器会在有效期内继续执行旧文件，
+# 造成新旧版本混用（main.js 新、buildings.js 旧）。统一走 ETag 协商缓存，
+# 未变更时返回 304，开销极小且不会出现版本错配。
+/*
+  Cache-Control: public, max-age=0, must-revalidate
