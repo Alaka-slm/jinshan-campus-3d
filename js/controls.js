@@ -20,6 +20,9 @@
       this.orbitPitch = 0.62;
       this.fp = { x: 0, y: 0, feet: 0, vz: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, onGround: false, camY: 0, bob: 0 };
       this.fly = false;
+      this.stick = { x: 0, y: 0, mag: 0, active: false }; // 触屏摇杆（-1..1）
+      this.runHeld = false;   // 触屏「跑」按钮
+      this.flyHold = 0;       // 触屏飞行升降：+1 / -1
       this.keys = {};
       this.locked = false;
       this.tween = null;
@@ -31,67 +34,66 @@
     }
     on(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
     emit(ev, ...a) { (this.listeners[ev] || []).forEach((f) => f(...a)); }
+    // 事件 → #app 逻辑坐标
+    _lp(e) { const p = JZ.view.toLocal(e.clientX, e.clientY); return [p.x, p.y]; }
 
     _bind() {
       const d = this.dom;
+      const V = JZ.view || {};
       d.addEventListener('contextmenu', (e) => e.preventDefault());
-      d.addEventListener('pointerdown', (e) => {
-        if (this.tween) return;
-        if (this.mode === 'fps') {
-          if (!this.locked) this.lock();
-          return;
-        }
-        d.setPointerCapture(e.pointerId);
-        this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, shift: e.shiftKey, moved: 0 };
-      });
-      d.addEventListener('pointermove', (e) => {
-        if (this.mode === 'fps') return;
-        const dr = this.drag;
-        if (!dr) return;
-        const dx = e.clientX - dr.x, dy = e.clientY - dr.y;
-        dr.x = e.clientX;
-        dr.y = e.clientY;
-        dr.moved += Math.abs(dx) + Math.abs(dy);
-        const pan = this.mode === 'top' ? dr.b === 0 && !dr.shift : dr.b === 2 || dr.b === 1 || dr.shift;
-        if (pan) this._pan(dx, dy);
-        else if (this.mode === 'top') this.yaw += dx * 0.006;
-        else {
-          this.yaw += dx * 0.006;
-          this.orbitPitch = clamp(this.orbitPitch + dy * 0.005, 0.06, 1.5);
-        }
-      });
-      d.addEventListener('pointerup', (e) => {
-        const dr = this.drag;
-        this.drag = null;
-        if (dr && dr.moved < 5 && dr.b === 0) this.emit('click', e);
-      });
-      d.addEventListener('dblclick', (e) => {
-        if (this.mode === 'fps') return;
-        const p = this.pickGround(e.clientX, e.clientY);
-        if (p) this.emit('dblground', p);
-      });
-      d.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        if (this.mode === 'fps' || this.tween) return;
-        const f = Math.pow(1.0015, e.deltaY * (e.deltaMode === 1 ? 30 : 1));
-        const nd = clamp(this.dist * f, 25, 3200);
-        const g = this.pickGround(e.clientX, e.clientY);
-        if (g) {
-          const k = 1 - nd / this.dist;
-          this.target.x += (g.wx - this.target.x) * k;
-          this.target.z += (g.wz - this.target.z) * k;
-        }
-        this.dist = nd;
-      }, { passive: false });
-      document.addEventListener('pointerlockchange', () => {
-        this.locked = document.pointerLockElement === this.dom;
-        this.emit('lock', this.locked);
-      });
-      document.addEventListener('mousemove', (e) => {
-        if (this.mode !== 'fps' || !this.locked) return;
-        this.fp.yaw -= e.movementX * 0.0022;
-        this.fp.pitch = clamp(this.fp.pitch - e.movementY * 0.0022, -1.5, 1.5);
-      });
+      // 触屏设备上指针/滚轮/指针锁定全部交给 js/touch.js，避免鼠标逻辑与手势打架
+      if (!V.isTouch) {
+        d.addEventListener('pointerdown', (e) => {
+          if (this.tween) return;
+          if (this.mode === 'fps') {
+            if (!this.locked) this.lock();
+            return;
+          }
+          d.setPointerCapture(e.pointerId);
+          this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, shift: e.shiftKey, moved: 0 };
+        });
+        d.addEventListener('pointermove', (e) => {
+          if (this.mode === 'fps') return;
+          const dr = this.drag;
+          if (!dr) return;
+          const dx = e.clientX - dr.x, dy = e.clientY - dr.y;
+          dr.x = e.clientX;
+          dr.y = e.clientY;
+          dr.moved += Math.abs(dx) + Math.abs(dy);
+          const pan = this.mode === 'top' ? dr.b === 0 && !dr.shift : dr.b === 2 || dr.b === 1 || dr.shift;
+          if (pan) this._pan(dx, dy);
+          else if (this.mode === 'top') this.yaw += dx * 0.006;
+          else {
+            this.yaw += dx * 0.006;
+            this.orbitPitch = clamp(this.orbitPitch + dy * 0.005, 0.06, 1.5);
+          }
+        });
+        d.addEventListener('pointerup', (e) => {
+          const dr = this.drag;
+          this.drag = null;
+          if (dr && dr.moved < 5 && dr.b === 0) this.emit('click', e);
+        });
+        d.addEventListener('dblclick', (e) => {
+          if (this.mode === 'fps') return;
+          const p = this.pickGround(...this._lp(e));
+          if (p) this.emit('dblground', p);
+        });
+        d.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          if (this.mode === 'fps' || this.tween) return;
+          const f = Math.pow(1.0015, e.deltaY * (e.deltaMode === 1 ? 30 : 1));
+          this.zoomAt(...this._lp(e), 1 / f);
+        }, { passive: false });
+        document.addEventListener('pointerlockchange', () => {
+          this.locked = document.pointerLockElement === this.dom;
+          this.emit('lock', this.locked);
+        });
+        document.addEventListener('mousemove', (e) => {
+          if (this.mode !== 'fps' || !this.locked) return;
+          this.fp.yaw -= e.movementX * 0.0022;
+          this.fp.pitch = clamp(this.fp.pitch - e.movementY * 0.0022, -1.5, 1.5);
+        });
+      }
       window.addEventListener('keydown', (e) => {
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
         this.keys[e.code] = true;
@@ -104,6 +106,33 @@
       window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
       window.addEventListener('blur', () => { this.keys = {}; });
     }
+    // 屏幕坐标缩放（滚轮 / 双指捏合共用）；入参为 #app 逻辑坐标，factor>1 表示放大
+    zoomAt(lx, ly, factor) {
+      if (this.mode === 'fps' || this.tween) return;
+      const nd = clamp(this.dist / factor, 25, 3200);
+      const g = this.pickGround(lx, ly);
+      if (g) {
+        const k = 1 - nd / this.dist;
+        this.target.x += (g.wx - this.target.x) * k;
+        this.target.z += (g.wz - this.target.z) * k;
+      }
+      this.dist = nd;
+    }
+    // 按屏幕位移平移（逻辑像素，已按当前视角换算）
+    panBy(dx, dy) { if (this.mode !== 'fps') this._pan(dx, dy); }
+
+    // ---------- 触屏输入（由 js/touch.js 调用） ----------
+    applyStick(x, y) {
+      this.stick.x = x;
+      this.stick.y = y;
+      this.stick.mag = Math.min(1, Math.hypot(x, y));
+      this.stick.active = this.stick.mag > 0.14;
+    }
+    jump() {
+      if (this.fly) return;
+      if (this.fp.onGround) { this.fp.vz = 5.2; this.fp.onGround = false; }
+    }
+    flyStep(dir) { this.flyHold = dir; }
     lock() {
       if (this.dom.requestPointerLock) {
         try {
@@ -115,7 +144,7 @@
     unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
 
     _pan(dx, dy) {
-      const h = this.dom.clientHeight || 800;
+      const h = (JZ.view && JZ.view.H) || this.dom.clientHeight || 800;
       const k = (2 * this.dist * Math.tan((this.cam.fov * Math.PI) / 360)) / h;
       const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
       // right = (cos, 0, -sin); forward(水平) = (-sin, 0, -cos)
@@ -123,10 +152,13 @@
       this.target.x += (-c * dx + -s * dy * m) * k;
       this.target.z += (s * dx + -c * dy * m) * k;
     }
-    // 射线与地形求交（步进 + 二分）
-    pickGround(cx, cy) {
-      const rect = this.dom.getBoundingClientRect();
-      const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    // 射线与地形求交（步进 + 二分）。入参为 #app 逻辑坐标（屏幕坐标先过 JZ.view.toLocal），
+    // 这样「强制横屏」整体旋转后拾取依然准确。
+    pickGround(lx, ly) {
+      const V = JZ.view;
+      const W = (V && V.W) || this.dom.clientWidth || 800;
+      const H = (V && V.H) || this.dom.clientHeight || 600;
+      const ndc = new THREE.Vector2((lx / W) * 2 - 1, -(ly / H) * 2 + 1);
       const rc = new THREE.Raycaster();
       rc.setFromCamera(ndc, this.cam);
       const o = rc.ray.origin, d = rc.ray.direction;
@@ -301,18 +333,27 @@
     }
     updateFPS(dt) {
       const k = this.keys, f = this.fp;
-      const run = k.ShiftLeft || k.ShiftRight;
+      const run = k.ShiftLeft || k.ShiftRight || this.runHeld;
       const speed = this.fly ? (run ? 45 : 15) : run ? 8.5 : 4.3;
       let mf = 0, ms = 0;
       if (k.KeyW || k.ArrowUp) mf += 1;
       if (k.KeyS || k.ArrowDown) mf -= 1;
       if (k.KeyA || k.ArrowLeft) ms -= 1;
       if (k.KeyD || k.ArrowRight) ms += 1;
+      // 触屏摇杆：屏幕右为 +x、下为 +y；前进对应摇杆向上（y<0）
+      const st = this.stick;
+      if (st.active) {
+        const m = st.mag;
+        mf += -st.y * m;
+        ms += st.x * m;
+      }
       const sy = Math.sin(f.yaw), cy = Math.cos(f.yaw);
       // 本地平面：前 = (-sin, cos)，右 = (cos, sin)
       let dx = -sy * mf + cy * ms, dy = cy * mf + sy * ms;
       const l = Math.hypot(dx, dy);
-      if (l > 0) { dx = (dx / l) * speed; dy = (dy / l) * speed; }
+      // 摇杆推得越轻走得越慢
+      const gain = st.active ? clamp(st.mag * 1.15, 0, 1) : 1;
+      if (l > 0) { dx = (dx / l) * speed * gain; dy = (dy / l) * speed * gain; }
       const a = 1 - Math.exp(-dt * (this.fly ? 4 : 11));
       f.vx = lerp(f.vx, dx, a);
       f.vy = lerp(f.vy, dy, a);
@@ -321,6 +362,8 @@
         let vz = 0;
         if (k.Space || k.KeyE) vz += speed;
         if (k.KeyC || k.KeyQ || k.ControlLeft) vz -= speed;
+        if (this.flyHold > 0) vz += speed;
+        else if (this.flyHold < 0) vz -= speed;
         f.feet += vz * dt;
         const b = this.world.bounds;
         f.x = clamp(nx, b[0], b[2]);
