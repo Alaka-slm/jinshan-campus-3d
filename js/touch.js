@@ -172,7 +172,8 @@
         } else if (rig.mode === 'top') {
           rig.panBy(dx, dy);
         } else if (rig.mode === 'orbit') {
-          rig.yaw += dx * 0.007;
+          // 与 Three.js OrbitControls 同向：向右滑，相机向左环绕（场景向右转）
+          rig.yaw -= dx * 0.007;
           rig.orbitPitch = clamp(rig.orbitPitch + dy * 0.005, 0.06, 1.5);
         }
       }
