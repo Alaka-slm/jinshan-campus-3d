@@ -64,7 +64,8 @@
           if (pan) this._pan(dx, dy);
           else if (this.mode === 'top') this.yaw += dx * 0.006;
           else {
-            this.yaw += dx * 0.006;
+            // 鸟瞰环绕与 OrbitControls 同向：向右拖，相机向左环绕
+            this.yaw -= dx * 0.006;
             this.orbitPitch = clamp(this.orbitPitch + dy * 0.005, 0.06, 1.5);
           }
         });
