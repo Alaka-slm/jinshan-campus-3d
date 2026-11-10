@@ -43,53 +43,99 @@
     // ---------- 画布手势 ----------
     _bindGestures() {
       if (!this.enabled) return; // 非触屏：交给 Rig 的鼠标/指针逻辑
-      const c = this.canvas;
+      // 监听根容器而不是画布：手指落在标注上也要能参与手势。
+      // 只处理「起点在画布或标注层」的触点（按手指 id 自己跟踪），
+      // 摇杆 / 按钮 / 面板上的手指不会被算进来，也就不会把单指环顾误判成双指。
+      const root = document.getElementById('app') || document;
       const opts = { passive: false };
-      c.addEventListener('touchstart', (e) => this._down(e), opts);
-      c.addEventListener('touchmove', (e) => this._move(e), opts);
-      c.addEventListener('touchend', (e) => this._up(e), opts);
-      c.addEventListener('touchcancel', (e) => this._cancel(e), opts);
+      root.addEventListener('touchstart', (e) => this._down(e), opts);
+      root.addEventListener('touchmove', (e) => this._move(e), opts);
+      root.addEventListener('touchend', (e) => this._up(e), opts);
+      root.addEventListener('touchcancel', (e) => this._cancel(e), opts);
     }
 
-    _collect(e, out) {
-      out.length = 0;
-      for (let i = 0; i < e.touches.length; i++) {
-        const t = e.touches[i];
-        const p = V.toLocal(t.clientX, t.clientY);
-        p.id = t.identifier;
-        out.push(p);
+    _owns(el) {
+      if (!el || !el.closest) return false;
+      return el === this.canvas || !!el.closest('#labels');
+    }
+
+    _own(e) {
+      const out = [];
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (this.pts.has(t.identifier)) out.push(t);
       }
       return out;
     }
 
-    _down(e) {
-      // 触屏设备上完全接管，避免页面滚动/缩放
-      if (e.cancelable) e.preventDefault();
-      const list = this._collect(e, this._buf || (this._buf = []));
-      if (list.length === 1) {
-        const p = list[0];
-        this.tap = { x: p.x, y: p.y, t: now() };
-        this.touchId = p.id;
-        this.drag = { lx: p.x, ly: p.y, moved: 0, start: p };
-        this.pinch = null;
-        if (this.rig.mode === 'transition') return;
-        if (this.rig.mode === 'fps') this.rig.unlock();
-      } else if (list.length >= 2) {
-        const a = list[0], b = list[1];
-        this.pinch = { d: dist(a, b), a: angle(a, b), c: mid(a, b), mode: this.rig.mode };
-        this.drag = null;
-        this.tap = null;
+    // 按当前画布触点重建手势状态（fresh=true：全新的一次触摸，允许判定为点击）
+    _rebase(fresh) {
+      const ids = Array.from(this.pts.keys());
+      this.pinch = null;
+      this.drag = null;
+      this.tap = null;
+      if (!ids.length) return;
+      const rig = this.rig;
+      const first = this.pts.get(ids[0]);
+      if (ids.length >= 2 && rig.mode !== 'fps') {
+        const a = this.pts.get(ids[0]), b = this.pts.get(ids[1]);
+        this.pinch = { d: dist(a, b), a: angle(a, b), c: mid(a, b), mode: rig.mode };
+        return;
       }
+      // 单指，或第一人称下（环顾只跟第一根手指，多余的手指忽略）
+      this.drag = { id: ids[0], lx: first.x, ly: first.y, moved: fresh ? 0 : 999 };
+      if (fresh && ids.length === 1) this.tap = { id: ids[0], x: first.x, y: first.y, t: now() };
+    }
+
+    // 同步触点：位置取自 e.touches，丢失 touchend 的幽灵触点在这里清掉。返回是否有触点被移除
+    _sync(e) {
+      const alive = {};
+      for (let i = 0; i < e.touches.length; i++) {
+        const t = e.touches[i];
+        alive[t.identifier] = t;
+      }
+      let removed = false;
+      this.pts.forEach((p, id) => {
+        const t = alive[id];
+        if (!t) { this.pts.delete(id); removed = true; return; }
+        const q = V.toLocal(t.clientX, t.clientY);
+        p.x = q.x; p.y = q.y;
+      });
+      return removed;
+    }
+
+    _down(e) {
+      let added = false, onlyLbl = true;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (!this._owns(t.target)) continue; // 摇杆/按钮/面板上的手指：不归画布手势管
+        const p = V.toLocal(t.clientX, t.clientY);
+        p.lbl = !!(t.target.closest && t.target.closest('#labels'));
+        this.pts.set(t.identifier, p);
+        added = true;
+        if (!p.lbl) onlyLbl = false;
+      }
+      if (!added) return;
+      this._sync(e);
+      // 只有标注上的触点不拦截，保留浏览器对标注的 click
+      if (!onlyLbl && e.cancelable) e.preventDefault();
+      if (this.rig.mode === 'transition') { this._rebase(false); return; }
+      if (this.rig.mode === 'fps' && this.pts.size === 1) this.rig.unlock();
+      this._rebase(this.pts.size === 1);
     }
 
     _move(e) {
+      if (!this.pts.size) return;
+      if (this._sync(e)) this._rebase(false);
+      if (!this.pts.size) return;
       if (e.cancelable) e.preventDefault();
-      const list = this._collect(e, this._buf || (this._buf = []));
       const rig = this.rig;
       if (rig.mode === 'transition' || rig.tween) return;
+      if (this.pinch && this.pinch.mode !== rig.mode) this._rebase(false);
+      const ids = Array.from(this.pts.keys());
 
-      if (this.pinch && list.length >= 2) {
-        const a = list[0], b = list[1];
+      if (this.pinch && ids.length >= 2) {
+        const a = this.pts.get(ids[0]), b = this.pts.get(ids[1]);
         const d = dist(a, b), ang = angle(a, b), c = mid(a, b);
         const p = this.pinch;
         const scale = d / (p.d || d);
@@ -98,13 +144,12 @@
         p.d = d; p.a = ang; p.c = c;
 
         if (rig.mode === 'top' || rig.mode === 'orbit') {
-          // 双指张开 = 放大（dist 变小）
+          // 双指张开 = 放大
           if (Math.abs(scale - 1) > 0.0015) rig.zoomAt(c.x, c.y, scale);
+          rig.yaw += dAng;
           if (rig.mode === 'top') {
-            rig.yaw += dAng;
             rig.panBy(dc.x * 0.55, dc.y * 0.55);
           } else {
-            rig.yaw += dAng;
             rig.orbitPitch = clamp(rig.orbitPitch + dc.y * 0.005, 0.06, 1.5);
             rig.panBy(dc.x, dc.y);
           }
@@ -112,11 +157,11 @@
         return;
       }
 
-      if (this.drag && list.length === 1) {
-        const p = list[0];
-        const dx = p.x - this.drag.lx, dy = p.y - this.drag.ly;
-        this.drag.lx = p.x;
-        this.drag.ly = p.y;
+      const q = this.drag && this.pts.get(this.drag.id);
+      if (q) {
+        const dx = q.x - this.drag.lx, dy = q.y - this.drag.ly;
+        this.drag.lx = q.x;
+        this.drag.ly = q.y;
         this.drag.moved += Math.abs(dx) + Math.abs(dy);
         if (this.tap && this.drag.moved > TAP_MOVE) this.tap = null;
 
@@ -140,39 +185,31 @@
 
     _up(e) {
       const rig = this.rig;
-      // 只认结束的那根手指，避免多指交错时误判
-      if (this.tap && e.changedTouches && e.changedTouches.length) {
-        let t = e.changedTouches[0];
-        for (let i = 0; i < e.changedTouches.length; i++) {
-          if (e.changedTouches[i].identifier === this.touchId) t = e.changedTouches[i];
+      const ended = this._own(e);
+      if (!ended.length) return;
+      for (let i = 0; i < ended.length; i++) {
+        const t = ended[i];
+        if (this.tap && this.tap.id === t.identifier) {
+          const p = V.toLocal(t.clientX, t.clientY);
+          const dt = now() - this.tap.t;
+          if (dt < TAP_TIME && Math.hypot(p.x - this.tap.x, p.y - this.tap.y) < TAP_MOVE) this._onTap(p);
+          else this.lastTap = null;
         }
-        const p = V.toLocal(t.clientX, t.clientY);
-        const dt = now() - this.tap.t;
-        if (dt < TAP_TIME && Math.hypot(p.x - this.tap.x, p.y - this.tap.y) < TAP_MOVE) {
-          this._onTap(p);
-        } else this.lastTap = null;
+        this.pts.delete(t.identifier);
       }
-      if (e.touches.length === 0) {
-        this.drag = null;
-        this.pinch = null;
-        this.tap = null;
-      } else if (e.touches.length === 1) {
-        // 双指变单指：重置基准，避免跳变
-        const t = e.touches[0];
-        const p = V.toLocal(t.clientX, t.clientY);
-        this.touchId = t.identifier;
-        this.drag = { lx: p.x, ly: p.y, moved: 999, start: p };
-        this.pinch = null;
-        this.tap = null;
-      }
+      this._sync(e);
+      // 少了一根手指：以剩下的手指重建基准，避免跳变
+      this._rebase(false);
+      if (e.cancelable) e.preventDefault();
       if (rig) rig.emit('touch', e);
     }
 
     _cancel(e) {
-      this.drag = null;
-      this.pinch = null;
-      this.tap = null;
+      const ended = this._own(e);
+      for (let i = 0; i < ended.length; i++) this.pts.delete(ended[i].identifier);
+      this._sync(e);
       this.lastTap = null;
+      this._rebase(false);
     }
 
     _onTap(p) {
